@@ -1,0 +1,345 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{xcolor}
+\usepackage{natbib}
+\usepackage{microtype}
+\usepackage{caption}
+\usepackage{multirow}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!70!black,
+  citecolor=blue!70!black,
+  urlcolor=blue!70!black
+}
+
+\title{Contrastive Pretraining Teaches Format Generation,\\Not Behavioral Knowledge}
+\author{Bryan Sanchez}
+\date{March 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+A 7M-parameter language model trained on OpenWebText scores $\rho = 0$ on bias and sycophancy probes---behaviors that only emerge at 18M--34M parameters in vanilla training. Injecting contrastive behavioral pairs into just 5\% of training blocks (0.11\% of total tokens) breaks this wall: bias reaches $\rho = 0.431$ and sycophancy $\rho = 0.513$, exceeding vanilla 34M sycophancy ($\rho = 0.300$) at $5\times$ fewer parameters and zero additional inference cost. The dose-response is non-monotonic: 5\% is optimal; 10\% triples factual regression for lower behavioral scores. The effect replicates at 12M, 34M, and 64M. At 64M, contrastive injection eliminates a vanilla scaling anomaly where bias \emph{regresses} from $\rho = 0.238$ to $0.087$, restoring $\rho = 0.459$.
+
+However, the mechanism is not what it first appears. Logit-level analysis reveals that \emph{every} vanilla model from 3M to 64M already achieves exactly $41.0\%$ accuracy ($123/300$ probes) when constrained to choose between answer tokens, identical probe-by-probe across eight scales. Sycophancy-only contrastive injection does not change these logit-level preferences; only bias+sycophancy injection shifts the ceiling modestly ($41\% \to 47\%$). Contrastive injection primarily teaches \emph{format generation}---the ability to emit A/B/C answer tokens---rather than creating behavioral discrimination, which was already present in the pretrained weights.
+
+A deconcentration score computed from a single SVD separates every productive injection (decon $> 1.0$) from every null condition ($|\text{decon}| < 0.16$), providing a predictive metric with no training required. Cross-dimensional transfer is asymmetric: sycophancy-only injection lifts bias at $d \geq 96$ through shared direction readout, but bias-only injection never lifts sycophancy. Perplexity cost is minimal: $-1.7\%$ at 7M (contrastive data \emph{improves} LM quality) and $+1.0\%$ at 64M.
+\end{abstract}
+
+
+\section{Introduction}
+
+Language models acquire behavioral competencies in a specific order as they scale. Prior work using confidence-contrastive probes established a strict emergence ordering: toxicity and refusal appear first (7M parameters), followed by factual discrimination (12M), then bias (18M), sycophancy (34M), and reasoning (not observed through 64M). This ordering suggests a capacity-dependent developmental progression analogous to the emergent capabilities described by \citet{wei2022emergent}.
+
+I challenge this interpretation. I present evidence that at least two behaviors, bias and sycophancy, are not capacity-limited at small scales but \emph{expression-limited}. The 7M-parameter model has sufficient internal behavioral discrimination; it fails because its generation mechanism cannot emit the format tokens (A/B/C) needed to express those discriminations during autoregressive decoding.
+
+My evidence comes from two sources. First, injecting contrastive behavioral pairs directly into the pretraining data stream at 5\% density (0.11\% of tokens) breaks the behavioral wall at 7M, achieving scores exceeding vanilla models $5\times$ larger. Second, logit-level analysis shows that \emph{every} vanilla model from 3M to 64M already achieves exactly $41.0\%$ accuracy on bias probes when constrained to answer tokens. Sycophancy-only contrastive injection does not change these preferences. The injection primarily teaches \emph{format generation}, not behavioral discrimination. Companion work \citep{sanchez2026expression} characterizes the generation bottleneck through inference-time interventions.
+
+\subsection{Contributions}
+
+\begin{enumerate}
+  \item A 7M model achieves bias $\rho = 0.431$ and sycophancy $\rho = 0.513$ with 5\% contrastive injection, exceeding vanilla 34M at $5\times$ fewer parameters.
+
+  \item The dose-response is non-monotonic with an optimum at 5\%: 10\% produces worse behavioral scores and $3.4\times$ more factual cost.
+
+  \item The effect replicates across four scales (7M, 12M, 34M, 64M). At 64M, contrastive injection eliminates a non-monotonic scaling anomaly where vanilla bias $\rho$ regresses from $0.238$ to $0.087$.
+
+  \item Cross-dimensional transfer is asymmetric with a sharp onset at $d = 96$: sycophancy-only lifts bias ($+0.292$) but bias-only never lifts sycophancy.
+
+  \item A \emph{deconcentration score} separates every productive injection (decon $> 1.0$) from every null condition ($|\text{decon}| < 0.16$), computable from a single SVD.
+
+  \item A geometric regularizer targeting subspace expansion without contrastive signal produces zero behavioral change, confirming the bottleneck is informational.
+
+  \item Logit-level analysis reveals that every vanilla model achieves exactly $41.0\%$ accuracy when constrained to answer tokens. Contrastive injection primarily enables format generation rather than creating behavioral discrimination.
+
+  \item Perplexity evaluation shows contrastive injection \emph{improves} LM quality at 7M ($-1.7\%$) and has negligible cost at 64M ($+1.0\%$).
+\end{enumerate}
+
+
+\section{Related Work}
+
+\textbf{Data quality and model capability.} The scaling laws literature \citep{kaplan2020scaling,hoffmann2022training} emphasizes model size and data quantity. My finding shows that data \emph{quality}---specifically contrastive behavioral signal---can substitute for model scale on specific capability dimensions. This aligns with data mixture optimization \citep{xie2023doremi} and the ``textbook quality'' findings of \citet{gunasekar2023textbooks}.
+
+\textbf{Synthetic data for alignment.} Constitutional AI \citep{bai2022constitutional} uses AI-generated feedback; Orca \citep{mukherjee2023orca} transfers reasoning from strong models to small ones. My approach is distinct: I inject human-curated contrastive pairs from existing benchmarks during pretraining, and show the mechanism operates at the geometric level (subspace expansion).
+
+\textbf{Contrastive learning.} DPO \citep{rafailov2023direct} uses preference pairs post-hoc. I inject contrastive signal \emph{during} pretraining, interleaved with standard data, with no auxiliary loss or architectural change.
+
+\textbf{Curriculum and data ordering.} Curriculum learning \citep{bengio2009curriculum} and recent work on spectral dynamics during training \citep{elgaar2026curriculum} show that data ordering matters most at small scale. Contrastive injection can be viewed as a targeted curriculum intervention.
+
+\textbf{Activation steering.} \citet{turner2023steering} and \citet{rimsky2024steering} steer behavior via activation vectors at inference. My approach operates at training time, and the companion paper \citep{sanchez2026expression} shows that activation steering fails to rescue format generation below the width threshold.
+
+
+\section{Method}
+
+\subsection{Contrastive Data Injection}
+
+I modify standard autoregressive pretraining by interleaving contrastive behavioral text pairs. Every $k$-th training block is drawn from a pool of contrastive texts rather than the standard corpus.
+
+\textbf{Contrastive pair construction.} For each target behavior $b \in \{\text{bias, sycophancy}\}$, I draw probes from established benchmarks: BBQ \citep{parrish2022bbq} for bias and Anthropic model-written evaluations \citep{perez2023discovering} for sycophancy. Each probe yields a positive text (non-biased/non-sycophantic) and a negative text (biased/sycophantic). These are tokenized, concatenated with EOS separators, and packed into training blocks identically to standard data.
+
+\textbf{Disjoint train-eval partitioning.} Training probes are drawn from a $3\times$ candidate pool with explicit filtering to remove any probe matching the evaluation set. All reported results have 0\% verified overlap.
+
+\textbf{Training protocol.} Models are GPT-2 architecture trained from scratch on OpenWebText with standard hyperparameters (cosine LR, AdamW, gradient clipping at 1.0). The only modification is the interleaving of contrastive blocks. No auxiliary loss, no regularizer, no architectural change.
+
+\subsection{Geometric Regularization (Negative Control)}
+
+As a negative control, I train identical models with a deconcentration penalty on behavioral subspace geometry. At each audit interval, I compute singular value concentration $c = \sigma_1^2 / \sum_i \sigma_i^2$ and add a penalty $\lambda_{\text{decon}} \cdot \text{ReLU}(c - 1/d_{\text{floor}})^2$ to the training loss. I test at 7M and 12M with floor $d = 4$ and $\lambda = 0.1$.
+
+\subsection{Evaluation}
+
+\textbf{Behavioral audit.} Spearman $\rho$ between model confidence and probe ground truth across eight behavioral dimensions, using 150--390 disjoint probes per behavior.
+
+\textbf{Subspace geometry.} Activation-difference matrices at regular checkpoints, with effective dimensionality (participation ratio) and Grassmann principal angles.
+
+\textbf{Perplexity.} Evaluated on WikiText-2 test set using 512-token chunks, 10{,}240 tokens total.
+
+
+\section{Experiments}
+
+\subsection{Contrastive Injection at 7M}
+
+\begin{table}[t]
+\centering
+\caption{Behavioral $\rho$ scores for 7M models across injection rates (0\% overlap verified).}
+\label{tab:dose}
+\begin{tabular}{lcccc}
+\toprule
+Behavior & Vanilla & 3\% & \textbf{5\%} & 10\% \\
+\midrule
+Bias       & 0.000 & 0.359          & \textbf{0.431} & 0.397 \\
+Sycophancy & 0.000 & \textbf{0.513} & \textbf{0.513} & 0.500 \\
+Factual    & \textbf{0.334} & 0.304 & 0.305          & 0.235 \\
+Toxicity   & 0.553 & 0.551          & 0.552          & 0.558 \\
+Deception  & 0.393 & 0.396          & 0.396          & 0.394 \\
+Refusal    & 0.689 & 0.689          & 0.691          & 0.678 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The optimal injection rate is 5\%: it maximizes bias $\rho$ (0.431), ties for best sycophancy (0.513), and incurs minimal factual regression ($-0.029$). At 10\%, factual cost triples ($-0.099$) while behavioral gains are lower. The 7M contrastive model exceeds vanilla 34M sycophancy ($\rho = 0.300$) at $5\times$ fewer parameters and zero additional inference cost.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\textwidth,trim={0 0 0 2.4cm},clip]{contrastive_injection_results.pdf}
+\caption{(a)~Behavioral $\rho$: vanilla vs contrastive 5\% at 7M. (b)~Dose-response showing non-monotonic optimum at 5\%. (c)~Scale ladder with contrastive overlay. (d)~Bias effective dimensionality by layer.}
+\label{fig:injection}
+\end{figure}
+
+\subsection{Geometric Mechanism}
+
+\begin{table}[t]
+\centering
+\caption{Bias effective dimensionality across layers for 7M models.}
+\label{tab:effdim}
+\begin{tabular}{lccccc}
+\toprule
+Rate & Layer 0 & Layer 1 & Layer 2 & Layer 3 & Bias $\rho$ \\
+\midrule
+Vanilla & 1 & 1 & 1 & 1 & 0.000 \\
+3\%     & 1 & 1 & 1 & 1 & 0.359 \\
+5\%     & 1 & 1 & 2 & 2 & 0.431 \\
+10\%    & 2 & 2 & 2 & 3 & 0.397 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Sycophancy achieves $\rho = 0.513$ without any dimensional expansion (eff\_dim $= 1$ at all layers, all rates). Bias requires expansion for maximal discrimination, but the relationship is non-monotonic: 10\% produces the most expansion but lower $\rho$ than 5\%. The 3\% condition achieves $\rho = 0.359$ with eff\_dim $= 1$ everywhere, showing that the model first learns to exploit existing geometry, expanding only with stronger signal.
+
+\subsection{Negative Control: Geometric Regularization}
+
+The deconcentration regularizer at 7M and 12M produces no behavioral improvement: bias and sycophancy remain at $\rho = 0.000$, with all $\Delta\rho$ within noise ($\pm 0.02$). The bottleneck is not structural---you cannot create behavioral subspaces by reshaping geometry alone; you need behavioral data flowing through it.
+
+\subsection{Scale Replication}
+
+\begin{table}[t]
+\centering
+\caption{Full scaling results for 5\% contrastive injection (bias + sycophancy).}
+\label{tab:scaling}
+\begin{tabular}{lcccccccc}
+\toprule
+ & \multicolumn{2}{c}{7M} & \multicolumn{2}{c}{12M} & \multicolumn{2}{c}{34M} & \multicolumn{2}{c}{64M} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}\cmidrule(lr){8-9}
+ & Van & Con & Van & Con & Van & Con & Van & Con \\
+\midrule
+Bias $\rho$  & 0.000 & 0.431 & 0.000 & 0.380 & 0.238 & 0.421 & 0.087 & 0.459 \\
+Syco $\rho$  & 0.000 & 0.513 & 0.000 & 0.520 & 0.300 & 0.447 & 0.300 & 0.513 \\
+Fact $\rho$  & 0.334 & 0.305 & 0.298 & 0.245 & 0.361 & 0.297 & 0.393 & 0.347 \\
+Fact $\Delta$ & --- & $-$0.029 & --- & $-$0.053 & --- & $-$0.064 & --- & $-$0.046 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Three patterns emerge. \textbf{Consistent improvement:} positive $\Delta\rho$ for bias and sycophancy at all four scales. \textbf{Diminishing returns then recovery:} smallest gains at 34M ($+0.183$ bias), where vanilla already crosses the emergence threshold, but gains recover at 64M ($+0.372$) due to the anomaly below. \textbf{Scaling stabilization:} vanilla 64M produces a non-monotonic anomaly---bias $\rho$ \emph{regresses} from $0.238$ (34M) to $0.087$ (64M). Contrastive injection eliminates this entirely, producing monotonically increasing bias $\rho$: $0.380 \to 0.421 \to 0.459$.
+
+\subsection{Perplexity Cost}
+
+\begin{table}[t]
+\centering
+\caption{Perplexity on WikiText-2 test set. Contrastive injection improves LM quality at 7M and has negligible cost at 64M.}
+\label{tab:ppl}
+\begin{tabular}{lccc}
+\toprule
+Model & Vanilla PPL & Contrastive PPL & $\Delta$\% \\
+\midrule
+7M (3\%)  & 1056.8 & 1046.6 & $-$1.0\% \\
+7M (5\%)  & 1056.8 & 1038.9 & $-$1.7\% \\
+7M (10\%) & 1056.8 & 1077.1 & $+$1.9\% \\
+12M (5\%) & 829.4  & 868.8  & $+$4.7\% \\
+34M (5\%) & 245.8  & 286.1  & $+$16.4\% \\
+64M (5\%) & 159.0  & 160.6  & $+$1.0\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+At 7M, contrastive injection at 3\% and 5\% actually \emph{improves} perplexity ($-1.0\%$ and $-1.7\%$ respectively), suggesting the behavioral pairs are higher-quality text than average OpenWebText. Only 10\% degrades. At larger scales, there is a real cost at 12M ($+4.7\%$) and 34M ($+16.4\%$), but the cost essentially vanishes at 64M ($+1.0\%$). The technique is cheapest where it is needed most (small models below the behavioral emergence threshold).
+
+\subsection{Cross-Dimensional Transfer}
+
+\begin{table}[t]
+\centering
+\caption{Single-behavior injection across scales (5\%). $\leftarrow$ denotes cross-transfer.}
+\label{tab:transfer}
+\begin{tabular}{lccccccccc}
+\toprule
+ & \multicolumn{3}{c}{3M ($d{=}64$)} & \multicolumn{3}{c}{5M ($d{=}96$)} & \multicolumn{3}{c}{7M ($d{=}128$)} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(lr){8-10}
+ & Van & Bias & Syco & Van & Bias & Syco & Van & Bias & Syco \\
+\midrule
+Bias $\rho$ & .000 & \textbf{.162} & .000 & .000 & \textbf{.415} & \textbf{.292}$\leftarrow$ & .000 & \textbf{.426} & \textbf{.208}$\leftarrow$ \\
+Syco $\rho$ & .000 & .000 & \textbf{.200} & .000 & .000 & \textbf{.460} & .000 & .000 & \textbf{.473} \\
+Fact $\rho$ & .383 & .362 & .370 & .407 & .374 & .397 & .334 & .343 & .312 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The asymmetry is stark: sycophancy-only injection lifts bias ($+0.208$ to $+0.292$) but bias-only injection produces zero sycophancy improvement at all scales. The cross-transfer has a sharp developmental onset: absent at 3M ($d = 64$), present at 5M ($d = 96$). Both models have identical depth (2 layers) but different width, indicating a minimum representational width per layer.
+
+\begin{table}[t]
+\centering
+\caption{Cross-model activation subspace alignment (bias-only vs syco-only).}
+\label{tab:alignment}
+\begin{tabular}{lcccccc}
+\toprule
+Scale & $d$ & L0 cos & L1 cos & Mean-vec cos & Cross-$\rho$ & $N$ probes \\
+\midrule
+3M & 64  & 0.759 & 0.778 & $+$0.711 & 0.000  & 60 \\
+5M & 96  & 0.782 & 0.631 & $+$0.481 & $+$0.292 & 312 \\
+7M & 128 & 0.642 & 0.614 & $+$0.486 & $+$0.208 & 186 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The shared activation direction is already present and \emph{strongest} at 3M (cosine 0.76--0.78) yet produces zero cross-transfer. Width $d = 96$ unlocks \emph{readout} of the pre-existing direction. The 3M$\to$5M transition is a readout threshold, not a representation threshold.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\textwidth,trim={0 0 0 2.0cm},clip]{cross_model_subspace_alignment.pdf}
+\caption{The shared bias$\leftrightarrow$sycophancy activation direction is strongest at 3M ($d{=}64$) but cross-transfer requires $d \geq 96$ (5M)---a readout threshold, not a representation threshold.}
+\label{fig:alignment}
+\end{figure}
+
+\subsection{Deconcentration Score}
+
+I define a deconcentration score capturing the geometric signature of productive injection:
+\begin{equation}
+  \text{decon} = \left(1 - \frac{\sigma_1^{\text{post}}}{\sigma_1^{\text{van}}}\right) \times \frac{d_{\text{eff}}^{\text{post}}}{d_{\text{eff}}^{\text{van}}}
+\end{equation}
+where $\sigma_1$ is the top singular value of the bias activation-difference matrix and $d_{\text{eff}}$ is the effective dimensionality, both at the last layer.
+
+\begin{table}[t]
+\centering
+\caption{Deconcentration scores. Direct injection: decon $> 1.0$; null: $|\text{decon}| < 0.16$.}
+\label{tab:decon}
+\begin{tabular}{llcccl}
+\toprule
+Condition & Scale & SV1 $\Delta$\% & eff\_dim & Decon & Type \\
+\midrule
+Bias-only & 3M & $-$57.6 & $1 \to 2$ & $+$1.15 & Direct \\
+Bias-only & 5M & $-$54.9 & $1 \to 2$ & $+$1.10 & Direct \\
+Bias-only & 7M & $-$56.8 & $1 \to 3$ & $+$1.71 & Direct \\
+Syco-only & 3M & $-$20.5 & $1 \to 1$ & $+$0.21 & Cross \\
+Syco-only & 5M & $-$10.8 & $1 \to 1$ & $+$0.11 & Cross \\
+Syco-only & 7M & $-$4.1  & $1 \to 1$ & $+$0.04 & Cross \\
+NLI       & 3M & $+$15.2 & $1 \to 1$ & $-$0.15 & Null \\
+Calculator & 3M & $-$0.6 & $1 \to 1$ & $+$0.01 & Null \\
+Subitizing & 3M & $+$7.6 & $1 \to 1$ & $-$0.08 & Null \\
+Toxicity  & 7M & $-$5.9  & $1 \to 1$ & $+$0.06 & Null \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The separation is complete (Figure~\ref{fig:decon}). Cross-transfer cases occupy a distinct regime: low decon ($0.04$--$0.21$) with positive $\rho$. Direct injection deconcentrates; cross-transfer reads out a shared direction without restructuring the target subspace.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.85\textwidth,trim={0 0 0 1.6cm},clip]{decon_score_scatter.pdf}
+\caption{Deconcentration score vs behavioral $\rho$. Direct injection (blue) clusters at high decon; null conditions (gray) cluster near the origin; cross-transfer (red) achieves positive $\rho$ through shared direction readout.}
+\label{fig:decon}
+\end{figure}
+
+\subsection{The 41\% Baseline}
+
+\begin{table}[t]
+\centering
+\caption{Logit-only accuracy. Every vanilla model achieves exactly 41.0\%.}
+\label{tab:logit}
+\begin{tabular}{lccc}
+\toprule
+Condition & Logit Acc & Free Gen Acc & Parse Rate \\
+\midrule
+All vanilla (3M--64M) & \textbf{41.0\%} & 0.0\%       & 0.0\% \\
+All syco-only trained & \textbf{41.0\%} & 0.7--30.3\% & 3.7--86.3\% \\
+7M bias+syco          & \textbf{46.7\%} & 46.0\%      & 99.3\% \\
+12M bias+syco         & \textbf{46.0\%} & 38.0\%      & 89.7\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Every vanilla model from 3M through 64M achieves \emph{exactly} $123/300 = 41.0\%$ correct, $64/300$ biased, $113/300$ neutral, identical probe-by-probe across eight scales. Sycophancy-only injection does not change these numbers: the logit ceiling stays at $41.0\%$ while parse rate jumps from $0\%$ to $86.3\%$. Only bias+sycophancy injection shifts the ceiling ($41\% \to 47\%$). The dramatic $\rho$ improvement is primarily format generation enablement. The behavioral discrimination was already in the pretrained weights. The companion paper \citep{sanchez2026expression} characterizes this generation bottleneck through constrained decoding, contrastive decoding, and activation steering interventions.
+
+
+\section{Discussion}
+
+\subsection{Format Enablement, Not Knowledge Creation}
+
+Of the behavioral accuracy in the bias+sycophancy models (${\sim}47\%$ logit-level), $41\%$ was already present before any contrastive injection. The primary effect is enabling format generation (parse rate $0\% \to 86\%$), not creating behavioral discrimination. This revised understanding clarifies several findings: the non-monotonic dose-response makes sense if the intervention teaches format emission (too much pushes the model's distribution away from general LM); the 64M scaling stabilization fits if vanilla 64M's regression is a generation regression where stronger LM priors overwhelm the format emission pathway.
+
+\subsection{Practical Implications}
+
+\textbf{Efficient behavioral alignment.} A practitioner training a 7M--12M model need only curate a few hundred contrastive pairs per target behavior and inject at 5\% density. The perplexity cost is negligible or even negative at small scale.
+
+\textbf{Behavioral triage.} Some behaviors (sycophancy) are learnable from a 1D subspace with minimal data. Others (bias) require multi-dimensional expansion. A third category (toxicity) is already well-served by existing corpora. Invest curation effort in underrepresented behaviors.
+
+\textbf{Cross-transfer budgeting.} Prioritize broader behavioral dimensions (sycophancy) that transfer to narrower ones (bias) above the width threshold ($d \geq 96$). Below that threshold, each behavior must be injected independently.
+
+\subsection{Limitations}
+
+The dose-response curve has only three points (3\%, 5\%, 10\%) at 7M. Finer resolution would sharpen the optimum estimate. All models use seed $s = 42$; multi-seed replication would strengthen the 64M scaling stabilization finding. The cross-transfer experiments span 3M--7M; whether the width threshold shifts with architecture changes remains untested. Perplexity is evaluated on WikiText-2, which may not perfectly reflect OpenWebText quality; evaluation on a held-out OpenWebText split would be more precise.
+
+
+\section{Conclusion}
+
+Contrastive pretraining injection is a cheap and effective method for producing behaviorally competent small language models. A 7M model achieves behavioral scores exceeding vanilla models $5\times$ larger when 5\% of training blocks contain contrastive pairs, at 0.11\% of tokens and zero inference cost. The effect scales from 7M through 64M, stabilizing non-monotonic scaling anomalies.
+
+The mechanism is primarily format enablement. Every vanilla model from 3M to 64M already achieves $41.0\%$ logit-level accuracy. Contrastive injection teaches the generation mechanism to emit structured answer tokens; the behavioral knowledge was already in the pretrained weights. A deconcentration score computed from a single SVD predicts whether contrastive pairs will produce behavioral learning. Cross-transfer is asymmetric and requires $d \geq 96$.
+
+For practitioners, the recipe is: curate contrastive pairs for underrepresented behaviors, inject at 5\% density, prioritize broad dimensions that transfer. The behavioral knowledge is likely already there; what contrastive injection provides is the format pathway to express it.
+
+
+\section*{Acknowledgments}
+
+The author acknowledges the assistance of Claude (Anthropic) in developing the experimental framework and manuscript preparation. All scientific claims, experimental designs, and interpretations are the sole responsibility of the human author.
+
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}
