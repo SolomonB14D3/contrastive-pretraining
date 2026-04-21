@@ -6,7 +6,7 @@ Code and data for the paper "Contrastive Pretraining Teaches Format Generation, 
 
 ## Key Finding
 
-Injecting contrastive behavioral pairs into 5% of training blocks (0.11% of tokens) breaks the behavioral emergence wall: a 7M model exceeds vanilla 34M on bias and sycophancy at 5x fewer parameters. But logit-level analysis reveals the mechanism is format generation enablement, not knowledge creation---every vanilla model from 3M to 64M already achieves 41.0% accuracy when constrained to answer tokens.
+Injecting contrastive behavioral pairs into 5% of training blocks (0.11% of tokens) breaks the behavioral emergence wall: a 7M model exceeds vanilla 34M on bias and sycophancy at 5x fewer parameters. But logit-level analysis reveals the mechanism is format generation enablement, not knowledge creation. Every vanilla model from 3M to 64M already achieves 41.0% accuracy when constrained to answer tokens.
 
 ## Results Summary
 
