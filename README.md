@@ -2,7 +2,7 @@
 
 Code and data for the paper "Contrastive Pretraining Teaches Format Generation, Not Behavioral Knowledge" (Sanchez, 2026).
 
-**Paper:** [arXiv link forthcoming]
+**Paper:** Accepted at the 1st Conference For AI Scientists (CAISc 2026), Open-Ended Problems track.
 
 ## Key Finding
 
@@ -49,9 +49,10 @@ python src/scale_audit.py --model checkpoints/7m_contr_05 --probes data/bbq_300.
 ## Citation
 
 ```bibtex
-@article{sanchez2026contrastive,
+@inproceedings{sanchez2026contrastive,
   title={Contrastive Pretraining Teaches Format Generation, Not Behavioral Knowledge},
   author={Sanchez, Bryan},
+  booktitle={Proceedings of the 1st Conference For AI Scientists (CAISc 2026)},
   year={2026}
 }
 ```
